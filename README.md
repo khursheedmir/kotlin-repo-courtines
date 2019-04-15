@@ -55,10 +55,10 @@ Enter an item name > Source Code Management > git > Repository URL (https://gith
 
 ```
 sleep 60
-docker pull khursheedmir/webpage
+docker pull khush1121/webpage
 docker stop webpage
 docker rm webpage
-docker run --name webpage -d -p 80:80 khursheedmir/webpage
+docker run --name webpage -d -p 80:80 khush1121/webpage
 ```
 
 ## start ngrok for public ip to receive github webhook (follow this only if you have local ip)
