@@ -48,12 +48,17 @@ data class UserAction(
 )
 ================================================================================
 
-      import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import kotlin.coroutines.CoroutineContext
+import com.google.cloud.Timestamp
+import javax.persistence.Entity
+import javax.persistence.Id
+import javax.persistence.Table
+import javax.persistence.Column
 
 @Service
 class UserActionService(
@@ -117,11 +122,29 @@ data class ActionDetails(
     val traceId: String?,
     val globalAddressId: String?,
     val ipAddress: String?,
-    val timestamp: Instant,
+    val timestamp: Timestamp,  // Changed to com.google.cloud.Timestamp
     val actionType: String,
     val currentStep: String?,
     val selectionData: Map<String, Any>?,
     val userAgent: String?,
     val errorCode: String?,
     val errorMessage: String?
+)
+
+@Entity
+@Table(name = "UserActions")
+data class UserAction(
+    @Id @Column(name = "actionId") val actionId: String,
+    @Column(name = "userId") val userId: String?,
+    @Column(name = "sessionId") val sessionId: String?,
+    @Column(name = "traceId") val traceId: String?,
+    @Column(name = "globalAddressId") val globalAddressId: String?,
+    @Column(name = "ipAddress") val ipAddress: String?,
+    @Column(name = "timestamp") val timestamp: Timestamp,  // Using Google Cloud Timestamp
+    @Column(name = "actionType") val actionType: String,
+    @Column(name = "currentStep") val currentStep: String?,
+    @Column(name = "selectionData") val selectionData: Map<String, Any>?,
+    @Column(name = "userAgent") val userAgent: String?,
+    @Column(name = "errorCode") val errorCode: String?,
+    @Column(name = "errorMessage") val errorMessage: String?
 )
