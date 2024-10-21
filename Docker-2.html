@@ -1,2 +1,256 @@
+dependencies {
+    implementation("com.google.cloud:google-cloud-spanner:6.23.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4")
+    implementation("com.google.cloud:spring-cloud-gcp-starter-data-spanner")
+    implementation("org.springframework.boot:spring-boot-starter-data-rest")
+    implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+    implementation("org.slf4j:slf4j-api:1.7.36")
+}
 
+========================================================================
+
+ Add Feature Flag to application.yml
+Create a feature flag in the application.yml file. This flag will enable or disable the user action processing feature dynamically.
+
+yaml
+
+features:
+  user-actions-enabled: true  # Set to false to disable the feature
+==============================================================================
+Step 3: Define Feature Flag Configuration
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
+
+@Component
+@ConfigurationProperties(prefix = "features")
+class FeatureFlags {
+    var userActionsEnabled: Boolean = true
+}
+
+===============================================================================
+
+
+Step 4: Configure Google Cloud Spanner
+
+import com.google.cloud.spanner.DatabaseId
+import com.google.cloud.spanner.Spanner
+import com.google.cloud.spanner.SpannerOptions
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+
+@Configuration
+class SpannerConfig(private val properties: SpannerProperties) {
+
+    @Bean
+    fun spanner(): Spanner = SpannerOptions.newBuilder()
+        .setProjectId(properties.projectId)
+        .build()
+        .service
+
+    @Bean
+    fun databaseId(): DatabaseId = DatabaseId.of(
+        properties.projectId,
+        properties.instanceId,
+        properties.databaseId
+    )
+}
+
+
+============================================================================================
+
+
+Step 5: Define Spanner Properties
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
+import javax.validation.constraints.NotBlank
+
+@Component
+@ConfigurationProperties(prefix = "spanner")
+data class SpannerProperties(
+    @field:NotBlank val projectId: String,
+    @field:NotBlank val instanceId: String,
+    @field:NotBlank val databaseId: String
 )
+
+
+===========================================================================================
+
+Step 6: Create the Data Model Class
+
+import com.google.cloud.Timestamp
+import org.springframework.data.annotation.Id
+import org.springframework.data.spanner.core.mapping.Column
+import org.springframework.data.spanner.core.mapping.Table
+import javax.validation.constraints.NotBlank
+
+@Table(name = "UserActions")
+data class UserAction(
+    @Id
+    @Column(name = "actionId")
+    @field:NotBlank val actionId: String,
+
+    @Column(name = "userId")
+    val userId: String?,
+
+    @Column(name = "sessionId")
+    val sessionId: String?,
+
+    @Column(name = "traceId")
+    val traceId: String?,
+
+    @Column(name = "globalAddressId")
+    val globalAddressId: String?,
+
+    @Column(name = "ipAddress")
+    val ipAddress: String?,
+
+    @Column(name = "timestamp")
+    val timestamp: Timestamp,  // Use Google Cloud Timestamp
+
+    @Column(name = "actionType")
+    @field:NotBlank val actionType: String,
+
+    @Column(name = "currentStep")
+    val currentStep: String?,
+
+    @Column(name = "selectionData")
+    val selectionData: Map<String, Any>?,
+
+    @Column(name = "userAgent")
+    val userAgent: String?,
+
+    @Column(name = "errorCode")
+    val errorCode: String?,
+
+    @Column(name = "errorMessage")
+    val errorMessage: String?
+)
+
+      
+===============================================================================
+
+      Step 7: Define the Spanner Repository Interface
+
+import com.google.cloud.spring.data.spanner.repository.SpannerRepository
+import org.springframework.stereotype.Repository
+
+@Repository
+interface UserActionRepository : SpannerRepository<UserAction, String>
+
+
+  ===========================================================================
+
+  Step 8: Implement the Service Class with Feature Flag Check
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import kotlin.coroutines.CoroutineContext
+
+@Service
+class UserActionService(
+    private val repository: UserActionRepository,
+    private val featureFlags: FeatureFlags,  // Inject feature flag
+    private val coroutineContext: CoroutineContext = Dispatchers.Default
+) {
+    private val logger = LoggerFactory.getLogger(UserActionService::class.java)
+
+    // Process action with feature flag check
+    suspend fun processAction(actionDetails: ActionDetails) = coroutineScope {
+        if (!featureFlags.userActionsEnabled) {
+            logger.warn("User actions feature is disabled. Skipping action processing.")
+            return@coroutineScope
+        }
+
+        val action = buildUserAction(actionDetails)
+        try {
+            withContext(Dispatchers.IO) {
+                repository.save(action)  // Use SpannerRepository to save the action
+            }
+            logger.info("Successfully saved action: actionId=${action.actionId}, userId=${action.userId}, traceId=${action.traceId}")
+        } catch (e: Exception) {
+            logger.error("Failed to save action: actionId=${action.actionId}, userId=${action.userId}, traceId=${action.traceId}", e)
+            throw e
+        }
+    }
+
+    // Get action with feature flag check
+    suspend fun getAction(actionId: String): UserAction? = coroutineScope {
+        if (!featureFlags.userActionsEnabled) {
+            logger.warn("User actions feature is disabled. Skipping action retrieval.")
+            return@coroutineScope null
+        }
+
+        try {
+            withContext(Dispatchers.IO) {
+                repository.findById(actionId).orElse(null)
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to retrieve action: actionId=$actionId", e)
+            throw e
+        }
+    }
+
+    // Helper function to build UserAction object
+    private fun buildUserAction(actionDetails: ActionDetails): UserAction {
+        return UserAction(
+            actionId = generateActionId(),
+            userId = actionDetails.userId,
+            sessionId = actionDetails.sessionId,
+            traceId = actionDetails.traceId,
+            globalAddressId = actionDetails.globalAddressId,
+            ipAddress = actionDetails.ipAddress,
+            timestamp = actionDetails.timestamp,  // Google Timestamp
+            actionType = actionDetails.actionType,
+            currentStep = actionDetails.currentStep,
+            selectionData = actionDetails.selectionData,
+            userAgent = actionDetails.userAgent,
+            errorCode = actionDetails.errorCode,
+            errorMessage = actionDetails.errorMessage
+        )
+    }
+
+    // Logic to generate actionId, e.g., UUID
+    private fun generateActionId(): String {
+        return "generated-unique-action-id"
+    }
+}
+
+
+  ==========================================================================================
+
+  Step 9: Define ActionDetails Class
+
+import com.google.cloud.Timestamp
+
+data class ActionDetails(
+    val userId: String?,
+    val sessionId: String?,
+    val traceId: String?,
+    val globalAddressId: String?,
+    val ipAddress: String?,
+    val timestamp: Timestamp,  // Google Cloud Timestamp
+    val actionType: String,
+    val currentStep: String?,
+    val selectionData: Map<String, Any>?,
+    val userAgent: String?,
+    val errorCode: String?,
+    val errorMessage: String?
+)
+
+
+      =======================================================================================
+
+      Step 10: Toggle Feature Flag for Testing
+
+features:
+  user-actions-enabled: false  # Disable the feature for testing
+
+      =========================================================================================
+
+      
